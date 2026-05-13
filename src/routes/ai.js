@@ -276,6 +276,107 @@ When the query type is "visualize", include a vivid scene description and a clea
   }
 });
 
+// Streaming text query endpoint (SSE)
+router.post('/text-query/stream', async (req, res) => {
+  try {
+    const {
+      selectedText,
+      context,
+      queryType = 'explain',
+      documentTitle,
+      pageNumber,
+      activeAgents = [],
+      broaderContext,
+      contextScope = 'passage',
+      customQuestion,
+      maxTokens,
+    } = req.body;
+
+    const parsedMaxTokens = Number.parseInt(maxTokens, 10);
+    const requestedMaxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0
+      ? parsedMaxTokens
+      : 1200;
+
+    if (!selectedText) {
+      return res.status(400).json({ success: false, error: 'Selected text is required' });
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    req.on('close', () => {
+      logger.info('SSE client disconnected');
+    });
+
+    const orchestrator = await getOrchestrator();
+    applyRequestedOrDefaultAgents(orchestrator, activeAgents);
+
+    const claudeAgent = orchestrator.agents.get('claude');
+    if (!claudeAgent?.streamToResponse) {
+      res.write(`data: ${JSON.stringify({ error: 'Streaming not available' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      return res.end();
+    }
+
+    const queryPrompts = {
+      chat: customQuestion || 'Please help me think through this passage in a conversational way',
+      explain: 'Please explain this text in detail',
+      define: 'Please define or clarify the key terms in this text',
+      historical_context: 'Please explain the historical, cultural, and period context behind this text',
+      interpret: 'Please interpret what this text means and what the author is doing beneath the surface',
+      visualize: 'Please describe how to visualize this text and provide an image-generation-ready prompt'
+    };
+
+    const action = queryPrompts[queryType] || 'Please help me understand this text';
+    const documentInfo = documentTitle
+      ? ` from "${documentTitle}"${pageNumber ? ` (page ${pageNumber})` : ''}`
+      : '';
+
+    const prompt = `${action}${documentInfo}:
+
+"${selectedText}"
+
+Context: ${context}
+
+  Context scope: ${contextScope}
+
+  ${broaderContext ? `Broader reading context:\n${broaderContext}\n\n` : ''}${customQuestion ? `Reader question: ${customQuestion}\n\n` : ''}
+Please respond helpfully and concisely, finishing within your token budget.`;
+
+    const messages = [{ role: 'user', content: prompt }];
+
+    const systemPrompt = `You are a helpful AI reading companion that assists users while they read.
+Your goal is to help users understand passages through explanation, definition, interpretation, historical context, and scene visualization.
+You have a budget of approximately ${requestedMaxTokens} tokens. Write concisely and ALWAYS finish with a complete sentence — never cut off mid-thought.
+Keep responses mobile-friendly: short paragraphs, no unnecessary headers or bullet points unless the content genuinely calls for it.
+When the query type is "visualize", include a vivid scene description and a clean standalone prompt for image generation.`;
+
+    const fastModel = process.env.CLAUDE_HAIKU_MODEL || 'claude-haiku-4-5@20251001';
+    const useHaiku = requestedMaxTokens <= 400;
+    const modelOverride = useHaiku ? fastModel : null;
+
+    await claudeAgent.streamToResponse(
+      messages,
+      { systemPrompt, temperature: 0.7, maxTokens: requestedMaxTokens, modelOverride },
+      res
+    );
+
+    logger.info(`Streamed text query: ${queryType} for "${selectedText.substring(0, 50)}..."`);
+
+  } catch (error) {
+    logger.error(`Error in streaming text query: ${error.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: 'Failed to stream AI response' });
+    } else if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  }
+});
+
 // Update active agents
 router.post('/agents', async (req, res) => {
   try {

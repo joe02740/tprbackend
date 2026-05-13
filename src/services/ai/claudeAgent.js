@@ -142,6 +142,61 @@ class ClaudeAgent {
     };
   }
 
+  async streamToResponse(messages, options = {}, res) {
+    const {
+      systemPrompt = null,
+      temperature = 0.7,
+      maxTokens = 1000,
+      modelOverride = null,
+    } = options;
+    const activeModel = modelOverride || this.model;
+
+    const anthropicMessages = [];
+    for (const message of messages) {
+      const { role, content } = message;
+      if (!content) continue;
+      if (role === 'user') {
+        anthropicMessages.push({ role: 'user', content });
+      } else if (role === 'claude') {
+        anthropicMessages.push({ role: 'assistant', content });
+      } else if (['gpt', 'gemini'].includes(role)) {
+        anthropicMessages.push({ role: 'user', content: `[${role.toUpperCase()}]: ${content}` });
+      }
+    }
+
+    logger.debug(`Streaming request to ${activeModel} with ${anthropicMessages.length} messages`);
+
+    try {
+      const stream = this.client.messages.stream({
+        model: activeModel,
+        max_tokens: maxTokens,
+        temperature,
+        system: systemPrompt || 'You are Claude, a helpful AI assistant.',
+        messages: anthropicMessages,
+      });
+
+      stream.on('text', (text) => {
+        if (!res.writableEnded) {
+          res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
+      });
+
+      await stream.finalMessage();
+
+      if (!res.writableEnded) {
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+    } catch (error) {
+      logger.error(`Streaming error: ${error.message}`);
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+    }
+  }
+
   supportsWebSearch() {
     return false; // Claude doesn't have built-in web search
   }
