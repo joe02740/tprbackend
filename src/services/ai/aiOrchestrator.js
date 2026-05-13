@@ -180,7 +180,8 @@ class AIOrchestrator {
         systemPrompt: enhancedRequest.systemPrompt,
         temperature: enhancedRequest.temperature || 0.7,
         maxTokens: enhancedRequest.maxTokens || 1000,
-        enableWebSearch: enhancedRequest.enableWebSearch || false
+        enableWebSearch: enhancedRequest.enableWebSearch || false,
+        modelOverride: enhancedRequest.modelOverride || null,
       });
 
       logger.debug(`💡 Agent response received: "${response.content.substring(0, Math.min(50, response.content.length))}..."`);

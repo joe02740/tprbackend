@@ -10,6 +10,20 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+function serializeGrokImageError(error) {
+  return {
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    statusCode: error.statusCode || error.response?.status,
+    statusText: error.statusText || error.response?.statusText,
+    requestId: error.requestId || null,
+    responseData: error.responseData || error.response?.data,
+    context: error.context,
+    stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+  };
+}
+
 // Initialize AI orchestrator (singleton)
 let aiOrchestrator = null;
 const grokImageService = new GrokImageService();
@@ -159,7 +173,13 @@ router.post('/text-query', async (req, res) => {
       broaderContext,
       contextScope = 'passage',
       customQuestion,
+      maxTokens,
     } = req.body;
+
+    const parsedMaxTokens = Number.parseInt(maxTokens, 10);
+    const requestedMaxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0
+      ? parsedMaxTokens
+      : 1200;
 
     if (!selectedText) {
       return res.status(400).json({
@@ -197,7 +217,7 @@ Context: ${context}
 
   ${broaderContext ? `Broader reading context:\n${broaderContext}\n\n` : ''}${customQuestion ? `Reader question: ${customQuestion}\n\n` : ''}
 
-Please provide a thorough response that helps me understand this better.`;
+Please respond helpfully and concisely, finishing within your token budget.`;
 
     // Create message for AI
     const messages = [{
@@ -207,17 +227,25 @@ Please provide a thorough response that helps me understand this better.`;
 
     // Build system prompt for text analysis
     const systemPrompt = `You are a helpful AI reading companion that assists users while they read.
-  Your goal is to help users understand passages through explanation, definition, interpretation, historical context, and scene visualization.
-  Be thorough but accessible. When the query type is "visualize", include a vivid scene description and a clean standalone prompt that could be used with an image generation model.`;
+Your goal is to help users understand passages through explanation, definition, interpretation, historical context, and scene visualization.
+You have a budget of approximately ${requestedMaxTokens} tokens. Write concisely and ALWAYS finish with a complete sentence — never cut off mid-thought.
+Keep responses mobile-friendly: short paragraphs, no unnecessary headers or bullet points unless the content genuinely calls for it.
+When the query type is "visualize", include a vivid scene description and a clean standalone prompt for image generation.`;
+
+    // Route short queries to Haiku for faster responses
+    const fastModel = process.env.CLAUDE_HAIKU_MODEL || 'claude-haiku-4-5@20251001';
+    const useHaiku = requestedMaxTokens <= 400 && orchestrator.agents.has('claude');
+    const modelOverride = useHaiku ? fastModel : null;
 
     const request = {
       messages,
       systemPrompt,
-      fractalDepth: 1, // Start at depth 1 for text analysis
+      fractalDepth: 0, // depth 0 = concise, avoids "add depth" instructions
       conversationId: `text_selection_${Date.now()}`,
       temperature: 0.7,
-      maxTokens: 1200, // Allow more tokens for detailed explanations
-      enableWebSearch: false
+      maxTokens: requestedMaxTokens,
+      enableWebSearch: false,
+      modelOverride,
     };
 
     const response = await orchestrator.generateFractalResponse(request);
@@ -324,7 +352,7 @@ ${broaderContext}
       data: image,
     });
   } catch (error) {
-    logger.error(`Error generating Grok image: ${error.message}`);
+    logger.error(`Error generating Grok image: ${JSON.stringify(serializeGrokImageError(error))}`);
     res.status(500).json({
       success: false,
       error: 'Failed to generate image',

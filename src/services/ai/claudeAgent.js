@@ -44,8 +44,10 @@ class ClaudeAgent {
       maxTokens = 1000,
       enableWebSearch = false,
       webSearchConfig = null,
+      modelOverride = null,
       ...kwargs
     } = options;
+    const activeModel = modelOverride || this.model;
 
     try {
       const enhancedSystemPrompt = systemPrompt || "You are Claude, a helpful AI assistant.";
@@ -78,11 +80,11 @@ class ClaudeAgent {
         }
       }
 
-      logger.debug(`Sending request to Claude Sonnet 4 with ${anthropicMessages.length} messages`);
+      logger.debug(`Sending request to ${activeModel} with ${anthropicMessages.length} messages`);
 
       // Create message using Anthropic API
       const response = await this.client.messages.create({
-        model: this.model,
+        model: activeModel,
         max_tokens: maxTokens,
         temperature: temperature,
         system: enhancedSystemPrompt,
