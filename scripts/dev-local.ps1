@@ -1,6 +1,9 @@
 # Run ThinkPack Solo Backend locally for development
 Write-Host "Starting ThinkPack Solo Backend locally..." -ForegroundColor Green
 
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+Push-Location $RepoRoot
+
 # Copy local environment file if .env doesn't exist
 if (!(Test-Path ".env")) {
     if (Test-Path ".env.local") {
@@ -26,4 +29,8 @@ Write-Host "" -ForegroundColor White
 Write-Host "Press Ctrl+C to stop the server" -ForegroundColor Yellow
 
 # Start the server with nodemon for auto-restart
-npm run dev
+try {
+    npm run dev
+} finally {
+    Pop-Location
+}

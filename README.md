@@ -186,17 +186,26 @@ headers: {
    gcloud services enable cloudbuild.googleapis.com
    ```
 
-2. **Deploy using Cloud Build**:
-   ```bash
-   gcloud builds submit --config cloudbuild.yaml
-   ```
+2. **Deploy using the repo script**:
+  ```powershell
+  cd scripts
+  .\deploy.ps1
+  ```
+
+  Optional parameters:
+  ```powershell
+  .\deploy.ps1 -ProjectId YOUR_PROJECT_ID -Region us-central1 -ServiceName thinkpack-solo-backend
+  ```
 
 3. **Set environment variables**:
-   ```bash
-   gcloud run services update thinkpack-solo-backend \
-     --region us-central1 \
-     --set-env-vars MONGODB_URI=your-mongodb-atlas-uri
+  ```powershell
+  .\setup-env.ps1 -Environment production -ProjectId YOUR_PROJECT_ID -MongoDbUri "your-mongodb-atlas-uri"
    ```
+
+4. **Alternative: deploy using Cloud Build**:
+  ```bash
+  gcloud builds submit --config cloudbuild.yaml
+  ```
 
 ### Manual Docker Deployment
 

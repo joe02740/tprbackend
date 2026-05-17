@@ -12,6 +12,7 @@ const documentRoutes = require('./routes/documents');
 const healthRoutes = require('./routes/health');
 const testRoutes = require('./routes/test');
 const aiRoutes = require('./routes/ai');
+const bookIntelligenceRoutes = require('./routes/book-intelligence');
 const diagnosticRoutes = require('./routes/diagnostic');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 // Authentication removed for single-user Android app - can add back later for multi-user
@@ -78,6 +79,7 @@ app.use('/api/diagnostic', diagnosticRoutes);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/book-intelligence', bookIntelligenceRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
