@@ -24,7 +24,8 @@ gcloud run deploy $ServiceName `
     --concurrency=80 `
     --timeout=300 `
     --max-instances=10 `
-    --min-instances=0
+    --min-instances=0 `
+    --update-env-vars="NODE_ENV=production,GOOGLE_CLOUD_PROJECT_ID=$ProjectId"
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Deployment failed." -ForegroundColor Red

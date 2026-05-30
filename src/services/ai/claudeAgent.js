@@ -148,6 +148,7 @@ class ClaudeAgent {
       temperature = 0.7,
       maxTokens = 1000,
       modelOverride = null,
+      abortSignal = null,
     } = options;
     const activeModel = modelOverride || this.model;
 
@@ -166,14 +167,24 @@ class ClaudeAgent {
 
     logger.debug(`Streaming request to ${activeModel} with ${anthropicMessages.length} messages`);
 
+    let stream = null;
+    const onAbort = () => {
+      try { stream && stream.abort && stream.abort(); } catch (_) {}
+    };
+
     try {
-      const stream = this.client.messages.stream({
+      stream = this.client.messages.stream({
         model: activeModel,
         max_tokens: maxTokens,
         temperature,
         system: systemPrompt || 'You are Claude, a helpful AI assistant.',
         messages: anthropicMessages,
       });
+
+      if (abortSignal) {
+        if (abortSignal.aborted) onAbort();
+        else abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
 
       stream.on('text', (text) => {
         if (!res.writableEnded) {
@@ -190,9 +201,14 @@ class ClaudeAgent {
     } catch (error) {
       logger.error(`Streaming error: ${error.message}`);
       if (!res.writableEnded) {
-        res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+        // Don't leak upstream error details to the client.
+        res.write(`data: ${JSON.stringify({ error: 'stream_failed' })}\n\n`);
         res.write('data: [DONE]\n\n');
         res.end();
+      }
+    } finally {
+      if (abortSignal) {
+        try { abortSignal.removeEventListener('abort', onAbort); } catch (_) {}
       }
     }
   }

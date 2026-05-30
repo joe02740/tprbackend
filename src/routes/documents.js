@@ -5,6 +5,11 @@ const { validateDocument, validatePagination } = require('../middleware/validati
 
 const router = express.Router();
 
+// Escape user input before constructing a RegExp — prevents ReDoS and pattern injection.
+function escapeRegex(input) {
+  return String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Get all documents for a user
 router.get('/', validatePagination, async (req, res) => {
   try {
@@ -15,9 +20,12 @@ router.get('/', validatePagination, async (req, res) => {
     const skip = (page - 1) * limit;
     const sort = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
 
-    // Build filter
+    // Build filter — reject non-string fileType to prevent NoSQL filter injection (e.g. {$ne: null}).
     const filter = { userId };
     if (fileType) {
+      if (typeof fileType !== 'string') {
+        return res.status(400).json({ success: false, error: 'Invalid fileType' });
+      }
       filter.fileType = fileType;
     }
 
@@ -168,13 +176,14 @@ router.patch('/:id', async (req, res) => {
 
     updateData.lastOpened = new Date();
 
-    const result = await db.collection('documents').findOneAndUpdate(
+    // mongodb-driver v6 returns the document directly, not wrapped in { value }.
+    const updated = await db.collection('documents').findOneAndUpdate(
       { _id: new ObjectId(id), userId },
       { $set: updateData },
       { returnDocument: 'after' }
     );
 
-    if (!result.value) {
+    if (!updated) {
       return res.status(404).json({
         success: false,
         error: 'Document not found'
@@ -184,8 +193,8 @@ router.patch('/:id', async (req, res) => {
     res.json({
       success: true,
       data: {
-        ...result.value,
-        _id: result.value._id.toString(),
+        ...updated,
+        _id: updated._id.toString(),
       }
     });
   } catch (error) {
@@ -211,12 +220,12 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    const result = await db.collection('documents').findOneAndDelete({
+    const deleted = await db.collection('documents').findOneAndDelete({
       _id: new ObjectId(id),
       userId
     });
 
-    if (!result.value) {
+    if (!deleted) {
       return res.status(404).json({
         success: false,
         error: 'Document not found'
@@ -243,14 +252,14 @@ router.get('/search/:query', async (req, res) => {
     const { query } = req.params;
     const userId = req.user.id;
 
-    if (!query || query.trim().length < 2) {
+    if (!query || query.trim().length < 2 || query.length > 200) {
       return res.status(400).json({
         success: false,
-        error: 'Search query must be at least 2 characters'
+        error: 'Search query must be 2-200 characters'
       });
     }
 
-    const searchRegex = new RegExp(query, 'i');
+    const searchRegex = new RegExp(escapeRegex(query), 'i');
 
     const documents = await db.collection('documents')
       .find({

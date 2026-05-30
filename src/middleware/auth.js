@@ -1,6 +1,14 @@
 const jwt = require('jsonwebtoken');
 const { getDatabase } = require('../config/database');
 
+function requireJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('JWT_SECRET must be set and at least 32 characters');
+  }
+  return secret;
+}
+
 // Simple authentication middleware for device-based auth
 const authenticateUser = async (req, res, next) => {
   try {
@@ -20,7 +28,7 @@ const authenticateUser = async (req, res, next) => {
     if (authToken) {
       try {
         const token = authToken.replace('Bearer ', '');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
+        const decoded = jwt.verify(token, requireJwtSecret(), { algorithms: ['HS256'] });
 
         if (decoded.userId !== userId) {
           return res.status(401).json({
@@ -30,7 +38,10 @@ const authenticateUser = async (req, res, next) => {
         }
       } catch (jwtError) {
         console.warn('JWT verification failed:', jwtError.message);
-        // For now, continue with device ID auth
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid or expired token'
+        });
       }
     }
 
@@ -88,8 +99,8 @@ const authenticateUser = async (req, res, next) => {
 const generateToken = (userId) => {
   return jwt.sign(
     { userId, type: 'device' },
-    process.env.JWT_SECRET || 'fallback-secret',
-    { expiresIn: '30d' }
+    requireJwtSecret(),
+    { expiresIn: '30d', algorithm: 'HS256' }
   );
 };
 

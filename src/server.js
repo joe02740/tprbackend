@@ -14,6 +14,7 @@ const testRoutes = require('./routes/test');
 const aiRoutes = require('./routes/ai');
 const bookIntelligenceRoutes = require('./routes/book-intelligence');
 const diagnosticRoutes = require('./routes/diagnostic');
+const feedbackRoutes = require('./routes/feedback');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 // Authentication removed for single-user Android app - can add back later for multi-user
 
@@ -35,18 +36,22 @@ app.use(helmet({
   },
 }));
 
-// CORS configuration for Flutter app
+// CORS — native Android app does not send Origin/cookies, so allow only explicit
+// browser origins via ALLOWED_ORIGINS env var. Default: no CORS access from browsers.
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : [];
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : true, // Allow all origins for now
-  credentials: true,
+  origin: allowedOrigins.length > 0 ? allowedOrigins : false,
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-User-ID'],
 }));
 
-// Rate limiting
+// Global rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: process.env.NODE_ENV === 'production' ? 100 : 1000, // limit each IP to 100 requests per windowMs in prod
+  max: process.env.NODE_ENV === 'production' ? 100 : 1000,
   message: {
     error: 'Too many requests from this IP, please try again later.',
   },
@@ -56,10 +61,22 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
+// Stricter rate limit for expensive AI endpoints (per-IP).
+const aiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: process.env.NODE_ENV === 'production' ? 30 : 300,
+  message: {
+    success: false,
+    error: 'Too many AI requests, please slow down.',
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Body parsing middleware
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Logging
 if (process.env.NODE_ENV !== 'test') {
@@ -69,17 +86,18 @@ if (process.env.NODE_ENV !== 'test') {
 // Health check (no auth required)
 app.use('/health', healthRoutes);
 
-// Test routes (no auth required for debugging)
-app.use('/test', testRoutes);
+// Debug-only routes — must never run in production.
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/test', testRoutes);
+  app.use('/api/diagnostic', diagnosticRoutes);
+}
 
-// Diagnostic routes (no auth required for debugging)
-app.use('/api/diagnostic', diagnosticRoutes);
-
-// API routes (no auth for single-user Android app)
+// API routes (no auth for single-user Android app — TODO: wire authenticateUser)
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/documents', documentRoutes);
-app.use('/api/ai', aiRoutes);
-app.use('/api/book-intelligence', bookIntelligenceRoutes);
+app.use('/api/ai', aiLimiter, aiRoutes);
+app.use('/api/book-intelligence', aiLimiter, bookIntelligenceRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

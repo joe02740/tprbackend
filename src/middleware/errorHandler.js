@@ -146,17 +146,16 @@ class TooManyRequestsError extends AppError {
   }
 }
 
-// Error handling for unhandled promise rejections
+// Log unhandled rejections but keep the process alive — a single bad promise
+// in a request handler should not take down the whole Cloud Run instance.
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Close server gracefully and exit
-  process.exit(1);
 });
 
-// Error handling for uncaught exceptions
+// Uncaught exceptions leave the process in an unknown state — exit so Cloud
+// Run replaces the instance, but only after logging.
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  // Close server gracefully and exit
   process.exit(1);
 });
 

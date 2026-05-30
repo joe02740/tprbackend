@@ -5,6 +5,10 @@ const { validateConversation, validatePagination } = require('../middleware/vali
 
 const router = express.Router();
 
+function escapeRegex(input) {
+  return String(input).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 // Get all conversations for a user
 router.get('/', validatePagination, async (req, res) => {
   try {
@@ -156,13 +160,14 @@ router.put('/:id', validateConversation, async (req, res) => {
     delete updateData._id;
     delete updateData.createdAt;
 
-    const result = await db.collection('conversations').findOneAndUpdate(
+    // mongodb-driver v6 returns the document directly, not wrapped in { value }.
+    const updated = await db.collection('conversations').findOneAndUpdate(
       { _id: new ObjectId(id), userId },
       { $set: updateData },
       { returnDocument: 'after' }
     );
 
-    if (!result.value) {
+    if (!updated) {
       return res.status(404).json({
         success: false,
         error: 'Conversation not found'
@@ -172,8 +177,8 @@ router.put('/:id', validateConversation, async (req, res) => {
     res.json({
       success: true,
       data: {
-        ...result.value,
-        _id: result.value._id.toString(),
+        ...updated,
+        _id: updated._id.toString(),
       }
     });
   } catch (error) {
@@ -213,7 +218,7 @@ router.post('/:id/messages', async (req, res) => {
       timestamp: new Date(),
     };
 
-    const result = await db.collection('conversations').findOneAndUpdate(
+    const updated = await db.collection('conversations').findOneAndUpdate(
       { _id: new ObjectId(id), userId },
       {
         $push: { messages: messageData },
@@ -222,7 +227,7 @@ router.post('/:id/messages', async (req, res) => {
       { returnDocument: 'after' }
     );
 
-    if (!result.value) {
+    if (!updated) {
       return res.status(404).json({
         success: false,
         error: 'Conversation not found'
@@ -233,8 +238,8 @@ router.post('/:id/messages', async (req, res) => {
       success: true,
       data: {
         conversation: {
-          ...result.value,
-          _id: result.value._id.toString(),
+          ...updated,
+          _id: updated._id.toString(),
         },
         newMessage: messageData
       }
@@ -262,12 +267,12 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    const result = await db.collection('conversations').findOneAndDelete({
+    const deleted = await db.collection('conversations').findOneAndDelete({
       _id: new ObjectId(id),
       userId
     });
 
-    if (!result.value) {
+    if (!deleted) {
       return res.status(404).json({
         success: false,
         error: 'Conversation not found'
@@ -294,14 +299,14 @@ router.get('/search/:query', async (req, res) => {
     const { query } = req.params;
     const userId = req.user.id;
 
-    if (!query || query.trim().length < 2) {
+    if (!query || query.trim().length < 2 || query.length > 200) {
       return res.status(400).json({
         success: false,
-        error: 'Search query must be at least 2 characters'
+        error: 'Search query must be 2-200 characters'
       });
     }
 
-    const searchRegex = new RegExp(query, 'i');
+    const searchRegex = new RegExp(escapeRegex(query), 'i');
 
     const conversations = await db.collection('conversations')
       .find({
