@@ -5,6 +5,7 @@
 const express = require('express');
 const AIOrchestrator = require('../services/ai/aiOrchestrator');
 const GrokImageService = require('../services/ai/grokImageService');
+const GrokVideoService = require('../services/ai/grokVideoService');
 const { getDatabase } = require('../config/database');
 const logger = require('../utils/logger');
 
@@ -15,7 +16,10 @@ const MAX_OUTPUT_TOKENS_HARD_CAP = 2000;
 const INPUT_CAPS = {
   selectedText: 5000,
   context: 10000,
-  broaderContext: 50000,
+  // Conversation history + book summary. Kept tight on purpose: input tokens
+  // directly drive Claude's time-to-first-token, so a huge context makes every
+  // request feel slow. ~16k chars ≈ 4k tokens, plenty for recent-turns context.
+  broaderContext: 16000,
   customQuestion: 1000,
   documentTitle: 500,
   systemPrompt: 8000,
@@ -43,7 +47,7 @@ function sanitizePromptInput(value) {
     .replace(/<\/?assistant>/gi, '');
 }
 
-function serializeGrokImageError(error) {
+function serializeGrokError(error) {
   return {
     name: error.name,
     message: error.message,
@@ -60,6 +64,7 @@ function serializeGrokImageError(error) {
 // Initialize AI orchestrator (singleton)
 let aiOrchestrator = null;
 const grokImageService = new GrokImageService();
+const grokVideoService = new GrokVideoService();
 
 const getOrchestrator = async () => {
   if (!aiOrchestrator) {
@@ -544,10 +549,73 @@ ${safeBroader}
       data: image,
     });
   } catch (error) {
-    logger.error(`Error generating Grok image: ${JSON.stringify(serializeGrokImageError(error))}`);
+    logger.error(`Error generating Grok image: ${JSON.stringify(serializeGrokError(error))}`);
     res.status(500).json({
       success: false,
       error: 'Failed to generate image',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// ── Video generation (image-to-video via Grok Imagine Video) ────────
+// The client supplies an already-generated still image URL plus a short
+// motion prompt. We poll xAI until the video job completes (~30-60s) and
+// return the playable URL. Weekly quota is enforced client-side; this
+// endpoint will happily generate as many as the caller pays for.
+router.post('/video', async (req, res) => {
+  try {
+    const {
+      prompt,
+      imageUrl,
+      selectedText,
+      durationSec = 5,
+    } = req.body || {};
+
+    if (!grokVideoService.isConfigured()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Grok video generation is not configured'
+      });
+    }
+    if (!imageUrl || typeof imageUrl !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'imageUrl is required (image-to-video).'
+      });
+    }
+    if (!/^https?:\/\//i.test(imageUrl)) {
+      return res.status(400).json({
+        success: false,
+        error: 'imageUrl must be an http(s) URL.'
+      });
+    }
+
+    const safePrompt = sanitizePromptInput(clampString(prompt, INPUT_CAPS.imagePrompt));
+    const safeSelected = sanitizePromptInput(clampString(selectedText, INPUT_CAPS.selectedText));
+    // Hard cap at 8s ($0.40/video) — the app only ever asks for 5, so anything
+    // higher is someone poking the API directly trying to run up the bill.
+    const safeDuration = Math.max(2, Math.min(8, Number.parseInt(durationSec, 10) || 5));
+
+    const motionPrompt = safePrompt || (safeSelected
+      ? `Animate this scene with subtle, atmospheric motion fitting the passage: "${safeSelected.slice(0, 400)}". Keep camera movement gentle and cinematic.`
+      : 'Animate this scene with subtle, atmospheric, cinematic motion.');
+
+    const video = await grokVideoService.generateVideo({
+      prompt: motionPrompt,
+      imageUrl,
+      durationSec: safeDuration,
+    });
+
+    res.json({
+      success: true,
+      data: video,
+    });
+  } catch (error) {
+    logger.error(`Error generating Grok video: ${JSON.stringify(serializeGrokError(error))}`);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to generate video',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

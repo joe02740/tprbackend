@@ -6,7 +6,9 @@
 const logger = require('../../utils/logger');
 
 class ClaudeAgent {
-  constructor(projectId, location = 'us-east5', model = 'claude-sonnet-4@20250514') {
+  // Default matches aiOrchestrator's CLAUDE_MODEL fallback; the orchestrator
+  // always passes a model in, so this only matters for direct construction.
+  constructor(projectId, location = 'us-east5', model = 'claude-sonnet-4-6') {
     this.projectId = projectId;
     this.location = location;
     this.model = model;

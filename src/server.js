@@ -16,6 +16,7 @@ const bookIntelligenceRoutes = require('./routes/book-intelligence');
 const diagnosticRoutes = require('./routes/diagnostic');
 const feedbackRoutes = require('./routes/feedback');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
+const { requireAppToken } = require('./middleware/appToken');
 // Authentication removed for single-user Android app - can add back later for multi-user
 
 const app = express();
@@ -92,7 +93,9 @@ if (process.env.NODE_ENV !== 'production') {
   app.use('/api/diagnostic', diagnosticRoutes);
 }
 
-// API routes (no auth for single-user Android app — TODO: wire authenticateUser)
+// API routes — gated by the shared app token when THINKPACK_APP_TOKEN is set.
+// (No per-user auth yet; the token stops drive-by abuse of paid AI endpoints.)
+app.use('/api', requireAppToken);
 app.use('/api/conversations', conversationRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/ai', aiLimiter, aiRoutes);

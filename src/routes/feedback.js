@@ -13,9 +13,19 @@ const router = express.Router();
 const recent = new Map();
 const WINDOW_MS = 60 * 60 * 1000;
 const MAX_PER_WINDOW = 5;
+const SWEEP_THRESHOLD = 1000;
+
+// Evict IPs whose entries have all expired — without this the map grows
+// unboundedly over the life of the process (slow memory leak).
+function sweepStaleEntries(now) {
+  for (const [ip, timestamps] of recent) {
+    if (timestamps.every((t) => now - t >= WINDOW_MS)) recent.delete(ip);
+  }
+}
 
 function isRateLimited(ip) {
   const now = Date.now();
+  if (recent.size > SWEEP_THRESHOLD) sweepStaleEntries(now);
   const timestamps = (recent.get(ip) || []).filter((t) => now - t < WINDOW_MS);
   if (timestamps.length >= MAX_PER_WINDOW) {
     recent.set(ip, timestamps);
